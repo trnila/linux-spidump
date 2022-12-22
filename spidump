@@ -1,0 +1,41 @@
+#!/usr/bin/env bpftrace
+
+tracepoint:spi:spi_message_done {
+  /*
+    Transfers are linked list with node stored inside struct spi_transfer:
+
+    struct spi_transfer {
+      const void *tx_buf;
+      ...
+      struct list_head transfer_list;
+      ...
+    };
+    
+    We can get struct spi_transfer by subtract transfer_list offset from node address.
+
+    Currently offsetof is not supported by bpf (https://github.com/iovisor/bpftrace/pull/2216),
+    so you can calculate offset with help of gdb:
+
+    $ aarch64-linux-gnu-gdb ./vmlinux   
+    (gdb) p/d offsetof(struct spi_transfer, transfer_list)
+    $1 = 120 
+  */
+  $offset = 120;
+
+  // TODO: support multiple transfers inside one struct spi_message
+  $msg = args->msg;
+  printf("%llu spi%d.%d len %4d\n  TX %rh\n  RX %rh\n",
+    nsecs,
+    args->bus_num,
+    args->chip_select,		
+    ((struct spi_transfer*) ((uint8*) $msg->transfers.next - $offset))->len,
+    buf(
+      ((struct spi_transfer*) ((uint8*) $msg->transfers.next - $offset))->tx_buf,
+      ((struct spi_transfer*) ((uint8*) $msg->transfers.next - $offset))->len
+    ),
+    buf(
+      ((struct spi_transfer*) ((uint8*) $msg->transfers.next - $offset))->rx_buf,
+      ((struct spi_transfer*) ((uint8*) $msg->transfers.next - $offset))->len
+    )
+  ); 
+}
